@@ -7736,7 +7736,8 @@ bool ImGui::Begin(const char* name, bool* p_open, ImGuiWindowFlags flags)
         // Lock menu offset so size calculation can use it as menu-bar windows need a minimum size.
         window->DC.MenuBarOffset.x = ImMax(ImMax(window->WindowPadding.x, style.ItemSpacing.x), g.NextWindowData.MenuBarOffsetMinVal.x);
         window->DC.MenuBarOffset.y = g.NextWindowData.MenuBarOffsetMinVal.y;
-        window->TitleBarHeight = (flags & ImGuiWindowFlags_NoTitleBar) ? 0.0f : g.FontSize + g.Style.FramePadding.y * 2.0f;
+        const float title_bar_padding = (window->DockIsActive) ? 8.0f : g.Style.FramePadding.y;
+        window->TitleBarHeight = (flags & ImGuiWindowFlags_NoTitleBar) ? 0.0f : g.FontSize + title_bar_padding * 2.0f;
         window->MenuBarHeight = (flags & ImGuiWindowFlags_MenuBar) ? window->DC.MenuBarOffset.y + g.FontSize + g.Style.FramePadding.y * 2.0f : 0.0f;
         window->FontRefSize = g.FontSize; // Lock this to discourage calling window->CalcFontSize() outside of current window.
 
@@ -18452,12 +18453,16 @@ static void ImGui::DockNodeWindowMenuUpdate(ImGuiDockNode* node, ImGuiTabBar* ta
         SetNextWindowPos(ImVec2(node->Pos.x, node->Pos.y + GetFrameHeight()), ImGuiCond_Always, ImVec2(0.0f, 0.0f));
     else
         SetNextWindowPos(ImVec2(node->Pos.x + node->Size.x, node->Pos.y + GetFrameHeight()), ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+    ImVec4 popupBg = g.Style.Colors[ImGuiCol_PopupBg];
+    popupBg.w = 1.0f;
+    PushStyleColor(ImGuiCol_PopupBg, popupBg);
     if (BeginPopup("#WindowMenu"))
     {
         node->IsFocused = true;
         g.DockNodeWindowMenuHandler(&g, node, tab_bar);
         EndPopup();
     }
+    PopStyleColor();
 }
 
 // User helper to append/amend into a dock node tab bar. Most commonly used to add e.g. a "+" button.
@@ -18857,28 +18862,30 @@ static void ImGui::DockNodeCalcTabBarLayout(const ImGuiDockNode* node, ImRect* o
     ImGuiContext& g = *GImGui;
     ImGuiStyle& style = g.Style;
 
-    ImRect r = ImRect(node->Pos.x, node->Pos.y, node->Pos.x + node->Size.x, node->Pos.y + g.FontSize + g.Style.FramePadding.y * 2.0f);
+    const float tab_padding_y = 8.0f;
+    ImRect r = ImRect(node->Pos.x, node->Pos.y, node->Pos.x + node->Size.x, node->Pos.y + g.FontSize + tab_padding_y * 2.0f);
     if (out_title_rect) { *out_title_rect = r; }
 
     r.Min.x += style.WindowBorderSize;
     r.Max.x -= style.WindowBorderSize;
 
     float button_sz = g.FontSize;
+    float button_y = r.Min.y + (r.GetHeight() - button_sz) * 0.5f;
     r.Min.x += style.FramePadding.x;
     r.Max.x -= style.FramePadding.x;
-    ImVec2 window_menu_button_pos = ImVec2(r.Min.x, r.Min.y + style.FramePadding.y);
+    ImVec2 window_menu_button_pos = ImVec2(r.Min.x, button_y);
     if (node->HasCloseButton)
     {
-        if (out_close_button_pos) *out_close_button_pos = ImVec2(r.Max.x - button_sz, r.Min.y + style.FramePadding.y);
+        if (out_close_button_pos) *out_close_button_pos = ImVec2(r.Max.x - button_sz, button_y);
         r.Max.x -= button_sz + style.ItemInnerSpacing.x;
     }
     if (node->HasWindowMenuButton && style.WindowMenuButtonPosition == ImGuiDir_Left)
     {
-        r.Min.x += button_sz + style.ItemInnerSpacing.x;
+        r.Min.x += button_sz + style.FramePadding.x;
     }
     else if (node->HasWindowMenuButton && style.WindowMenuButtonPosition == ImGuiDir_Right)
     {
-        window_menu_button_pos = ImVec2(r.Max.x - button_sz, r.Min.y + style.FramePadding.y);
+        window_menu_button_pos = ImVec2(r.Max.x - button_sz, button_y);
         r.Max.x -= button_sz + style.ItemInnerSpacing.x;
     }
     if (out_tab_bar_rect) { *out_tab_bar_rect = r; }

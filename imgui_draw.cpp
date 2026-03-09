@@ -4430,8 +4430,15 @@ void ImGui::RenderArrowPointingAt(ImDrawList* draw_list, ImVec2 pos, ImVec2 half
 // and because the saved space means that the left-most tab label can stay at exactly the same position as the label of a loose window.
 void ImGui::RenderArrowDockMenu(ImDrawList* draw_list, ImVec2 p_min, float sz, ImU32 col)
 {
-    draw_list->AddRectFilled(p_min + ImVec2(sz * 0.20f, sz * 0.15f), p_min + ImVec2(sz * 0.80f, sz * 0.30f), col);
-    RenderArrowPointingAt(draw_list, p_min + ImVec2(sz * 0.50f, sz * 0.85f), ImVec2(sz * 0.30f, sz * 0.40f), ImGuiDir_Down, col);
+    // Draw a hamburger menu icon (three horizontal lines)
+    float cx = p_min.x + sz * 0.5f;
+    float cy = p_min.y + sz * 0.5f;
+    float half = sz * 0.30f;
+    float spacing = sz * 0.22f;
+    float thickness = ImMax(sz * 0.12f, 1.0f);
+    draw_list->AddLine(ImVec2(cx - half, cy - spacing), ImVec2(cx + half, cy - spacing), col, thickness);
+    draw_list->AddLine(ImVec2(cx - half, cy),           ImVec2(cx + half, cy),           col, thickness);
+    draw_list->AddLine(ImVec2(cx - half, cy + spacing), ImVec2(cx + half, cy + spacing), col, thickness);
 }
 
 static inline float ImAcos01(float x)
