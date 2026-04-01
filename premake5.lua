@@ -21,12 +21,24 @@ project "ImGui"
 		"imstb_textedit.h",
 		"imstb_truetype.h",
 		"imgui_demo.cpp",
+
+		-- ImPlot submodule
+		"implot/implot.h",
+		"implot/implot.cpp",
+		"implot/implot_internal.h",
+		"implot/implot_items.cpp",
 	}
 	
 	defines
 	{
         "IMGUI_USE_WCHAR32"
 	}
+
+    includedirs
+    {
+        -- Back to vendor dir for Hazel, which uses imgui/imgui.h include paths
+        "../"
+    }
 
 	filter "system:linux"
 		pic "On"
