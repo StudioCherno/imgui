@@ -703,10 +703,6 @@ static bool ImGui_ImplGlfw_Init(GLFWwindow* window, bool install_callbacks, Glfw
     bool has_viewports = false;
 #ifndef __EMSCRIPTEN__
     has_viewports = true;
-#if GLFW_HAS_GETPLATFORM
-    if (glfwGetPlatform() == GLFW_PLATFORM_WAYLAND)
-        has_viewports = false;
-#endif
     if (has_viewports)
         io.BackendFlags |= ImGuiBackendFlags_PlatformHasViewports;  // We can create multi-viewports on the Platform side (optional)
 #endif
