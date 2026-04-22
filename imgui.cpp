@@ -5418,10 +5418,21 @@ void ImGui::UpdateMouseMovingWindowNewFrame()
             ImVec2 pos = g.IO.MousePos - g.ActiveIdClickOffset;
             if (moving_window->Pos.x != pos.x || moving_window->Pos.y != pos.y)
             {
-                SetWindowPos(moving_window, pos, ImGuiCond_Always);
+                // Use the actual window location returned by the window system if possible,
+                // since windows can snap to borders and things like that which result in a final
+                // window location that is not exactly the same as what was requested.
+                ImVec2 actual = pos;
+                if (moving_window->Viewport && moving_window->ViewportOwned
+                    && g.PlatformIO.Platform_SetWindowPos && g.PlatformIO.Platform_GetWindowPos)
+                {
+                    g.PlatformIO.Platform_SetWindowPos(moving_window->Viewport, pos);
+                    actual = g.PlatformIO.Platform_GetWindowPos(moving_window->Viewport);
+                }
+                SetWindowPos(moving_window, actual, ImGuiCond_Always);
                 if (moving_window->Viewport && moving_window->ViewportOwned) // Synchronize viewport immediately because some overlays may relies on clipping rectangle before we Begin() into the window.
                 {
-                    moving_window->Viewport->Pos = pos;
+                    moving_window->Viewport->Pos = actual;
+                    moving_window->Viewport->LastPlatformPos = actual;
                     moving_window->Viewport->UpdateWorkRect();
                 }
             }
