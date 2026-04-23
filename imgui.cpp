@@ -5431,8 +5431,15 @@ void ImGui::UpdateMouseMovingWindowNewFrame()
                 SetWindowPos(moving_window, actual, ImGuiCond_Always);
                 if (moving_window->Viewport && moving_window->ViewportOwned) // Synchronize viewport immediately because some overlays may relies on clipping rectangle before we Begin() into the window.
                 {
-                    moving_window->Viewport->Pos = actual;
-                    moving_window->Viewport->LastPlatformPos = actual;
+                    // Use moving_window->Pos (which SetWindowPos truncated via
+                    // ImTrunc) rather than raw `actual`. If viewport->Pos kept
+                    // the untruncated value, a later sync site would overwrite it
+                    // with window->Pos (truncated), and UpdatePlatformWindows
+                    // would see the mismatch against LastPlatformPos and push the
+                    // truncated position to the OS — which maps to a different
+                    // OS-pixel than what we just set, causing oscillation.
+                    moving_window->Viewport->Pos = moving_window->Pos;
+                    moving_window->Viewport->LastPlatformPos = moving_window->Pos;
                     moving_window->Viewport->UpdateWorkRect();
                 }
             }
