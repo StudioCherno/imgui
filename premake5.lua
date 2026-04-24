@@ -3,7 +3,9 @@ project "ImGui"
 	language "C++"
 	cppdialect "C++20"
     staticruntime "off"
-    systemversion "latest"
+	filter "system:windows"
+		systemversion "latest"
+	filter {}
 
 	targetdir ("bin/" .. outputdir .. "/%{prj.name}")
 	objdir ("bin-int/" .. outputdir .. "/%{prj.name}")
