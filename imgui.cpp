@@ -21980,7 +21980,11 @@ void ImGui::BeginDockableDragDropSource(ImGuiWindow* window)
     g.LastItemData.ID = window->MoveId;
     window = window->RootWindowDockTree;
     IM_ASSERT((window->Flags & ImGuiWindowFlags_NoDocking) == 0);
-    bool is_drag_docking = (g.IO.ConfigDockingWithShift) || ImRect(0, 0, window->SizeFull.x, GetFrameHeight()).Contains(g.ActiveIdClickOffset); // FIXME-DOCKING: Need to make this stateful and explicit
+    // LuckyEngine: mirrors the custom tab_padding_y in TabItemCalcSize - without this,
+    // clicks in the lower half of a tall tab fall outside GetFrameHeight() and tear-away
+    // drags never turn into a drag-drop source (no docking overlay until re-grab).
+    const float tab_drag_height = ImMax(GetFrameHeight(), g.FontSize + 8.0f * 2.0f);
+    bool is_drag_docking = (g.IO.ConfigDockingWithShift) || ImRect(0, 0, window->SizeFull.x, tab_drag_height).Contains(g.ActiveIdClickOffset); // FIXME-DOCKING: Need to make this stateful and explicit
     ImGuiDragDropFlags drag_drop_flags = ImGuiDragDropFlags_SourceNoPreviewTooltip | ImGuiDragDropFlags_SourceNoHoldToOpenOthers | ImGuiDragDropFlags_PayloadAutoExpire | ImGuiDragDropFlags_PayloadNoCrossContext | ImGuiDragDropFlags_PayloadNoCrossProcess;
     if (is_drag_docking && BeginDragDropSource(drag_drop_flags))
     {
