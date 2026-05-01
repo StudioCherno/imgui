@@ -1637,6 +1637,7 @@ ImGuiIO::ImGuiIO()
     ConfigViewportsNoTaskBarIcon = false;
     ConfigViewportsNoDecoration = true;
     ConfigViewportsNoDefaultParent = true;
+    ConfigViewportsNoFloatingWindows = false;
     ConfigViewportsPlatformFocusSetsImGuiFocus = true;
 
     // Miscellaneous options
@@ -17856,6 +17857,18 @@ static void ImGui::WindowSelectViewport(ImGuiWindow* window)
         SetWindowViewport(window, main_viewport);
         return;
     }
+
+    // When ConfigViewportsNoFloatingWindows is set, only popups/tooltips/menus
+    // may create their own viewport. All other windows stay in the main viewport.
+    if (g.IO.ConfigViewportsNoFloatingWindows)
+    {
+        if ((flags & (ImGuiWindowFlags_Popup | ImGuiWindowFlags_Tooltip | ImGuiWindowFlags_ChildWindow | ImGuiWindowFlags_ChildMenu)) == 0)
+        {
+            SetWindowViewport(window, main_viewport);
+            return;
+        }
+    }
+
     window->ViewportOwned = false;
 
     // Appearing popups reset their viewport so they can inherit again
