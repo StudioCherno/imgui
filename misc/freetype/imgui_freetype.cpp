@@ -621,6 +621,9 @@ struct LunasvgPortState
     FT_Error            err = FT_Err_Ok;
     lunasvg::Matrix     matrix;
     std::unique_ptr<lunasvg::Document> svg = nullptr;
+#if LUNASVG_VERSION_MAJOR >= 3
+    lunasvg::Element    glyphElement;
+#endif
 };
 
 static FT_Error ImGuiLunasvgPortInit(FT_Pointer* _state)
@@ -642,11 +645,20 @@ static FT_Error ImGuiLunasvgPortRender(FT_GlyphSlot slot, FT_Pointer* _state)
     if (state->err != FT_Err_Ok)
         return state->err;
 
-    // rows is height, pitch (or stride) equals to width * sizeof(int32)
-    lunasvg::Bitmap bitmap((uint8_t*)slot->bitmap.buffer, slot->bitmap.width, slot->bitmap.rows, slot->bitmap.pitch);
 #if LUNASVG_VERSION_MAJOR >= 3
-    state->svg->render(bitmap, state->matrix); // state->matrix is already scaled and translated
+    if (state->glyphElement.isElement())
+    {
+        lunasvg::Bitmap rendered = state->glyphElement.renderToBitmap(slot->bitmap.width, slot->bitmap.rows);
+        if (rendered.data())
+            memcpy(slot->bitmap.buffer, rendered.data(), (size_t)slot->bitmap.rows * slot->bitmap.pitch);
+    }
+    else
+    {
+        lunasvg::Bitmap bitmap((uint8_t*)slot->bitmap.buffer, slot->bitmap.width, slot->bitmap.rows, slot->bitmap.pitch);
+        state->svg->render(bitmap, state->matrix);
+    }
 #else
+    lunasvg::Bitmap bitmap((uint8_t*)slot->bitmap.buffer, slot->bitmap.width, slot->bitmap.rows, slot->bitmap.pitch);
     state->svg->setMatrix(state->svg->matrix().identity()); // Reset the svg matrix to the default value
     state->svg->render(bitmap, state->matrix);              // state->matrix is already scaled and translated
 #endif
@@ -673,10 +685,26 @@ static FT_Error ImGuiLunasvgPortPresetSlot(FT_GlyphSlot slot, FT_Bool cache, FT_
     }
 
 #if LUNASVG_VERSION_MAJOR >= 3
-    lunasvg::Box box = state->svg->boundingBox();
+    // Multi-glyph SVG documents (e.g. NotoColorEmoji) store all glyphs in one SVG
+    // with elements identified by "glyph<ID>". Find the specific glyph element.
+    char glyph_id_str[64];
+    ImFormatString(glyph_id_str, sizeof(glyph_id_str), "glyph%u", slot->glyph_index);
+    state->glyphElement = state->svg->getElementById(glyph_id_str);
+
+    lunasvg::Box box;
+    if (state->glyphElement.isElement())
+        box = state->glyphElement.getBoundingBox();
+    else
+        box = state->svg->boundingBox();
 #else
     lunasvg::Box box = state->svg->box();
 #endif
+    if (box.w == 0 || box.h == 0)
+    {
+        state->err = FT_Err_Invalid_SVG_Document;
+        return state->err;
+    }
+
     double scale = std::min(metrics.x_ppem / box.w, metrics.y_ppem / box.h);
     double xx = (double)document->transform.xx / (1 << 16);
     double xy = -(double)document->transform.xy / (1 << 16);
@@ -686,7 +714,34 @@ static FT_Error ImGuiLunasvgPortPresetSlot(FT_GlyphSlot slot, FT_Bool cache, FT_
     double y0 = -(double)document->delta.y / 64 * box.h / metrics.y_ppem;
 
 #if LUNASVG_VERSION_MAJOR >= 3
-    // Scale, transform and pre-translate the matrix for the rendering step
+    if (state->glyphElement.isElement())
+    {
+        // renderToBitmap handles positioning internally, so we just need pixel dimensions
+        double bitmapW = box.w * scale;
+        double bitmapH = box.h * scale;
+
+        slot->bitmap.width = (unsigned int)(ImCeil((float)bitmapW));
+        slot->bitmap.rows = (unsigned int)(ImCeil((float)bitmapH));
+        slot->bitmap.pitch = slot->bitmap.width * 4;
+        slot->bitmap.pixel_mode = FT_PIXEL_MODE_BGRA;
+        slot->bitmap_left = 0;
+        slot->bitmap_top = (FT_Int)slot->bitmap.rows;
+
+        slot->metrics.width = FT_Pos(IM_ROUND(bitmapW * 64.0));
+        slot->metrics.height = FT_Pos(IM_ROUND(bitmapH * 64.0));
+        slot->metrics.horiBearingX = 0;
+        slot->metrics.horiBearingY = FT_Pos(IM_ROUND(bitmapH * 64.0));
+        slot->metrics.vertBearingX = slot->metrics.horiBearingX / 2 - slot->metrics.horiAdvance / 2;
+        slot->metrics.vertBearingY = (slot->metrics.vertAdvance - slot->metrics.height) / 2;
+
+        if (slot->metrics.vertAdvance == 0)
+            slot->metrics.vertAdvance = FT_Pos(bitmapH * 1.2 * 64.0);
+
+        state->err = FT_Err_Ok;
+        return state->err;
+    }
+
+    // Fallback: single-glyph SVG documents — use standard matrix-based rendering
     state->matrix = lunasvg::Matrix::translated(-box.x, -box.y);
     state->matrix.multiply(lunasvg::Matrix(xx, xy, yx, yy, x0, y0));
     state->matrix.scale(scale, scale);
