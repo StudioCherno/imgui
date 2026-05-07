@@ -703,10 +703,6 @@ static bool ImGui_ImplGlfw_Init(GLFWwindow* window, bool install_callbacks, Glfw
     bool has_viewports = false;
 #ifndef __EMSCRIPTEN__
     has_viewports = true;
-#if GLFW_HAS_GETPLATFORM
-    if (glfwGetPlatform() == GLFW_PLATFORM_WAYLAND)
-        has_viewports = false;
-#endif
     if (has_viewports)
         io.BackendFlags |= ImGuiBackendFlags_PlatformHasViewports;  // We can create multi-viewports on the Platform side (optional)
 #endif
@@ -1068,11 +1064,6 @@ static void ImGui_ImplGlfw_UpdateMonitors()
 // - Some accessibility applications are declaring virtual monitors with a DPI of 0.0f, see #7902. We preserve this value for caller to handle.
 float ImGui_ImplGlfw_GetContentScaleForWindow(GLFWwindow* window)
 {
-#if GLFW_HAS_WAYLAND
-    if (ImGui_ImplGlfw_Data* bd = ImGui_ImplGlfw_GetBackendData(window))
-        if (bd->IsWayland)
-            return 1.0f;
-#endif
 #if GLFW_HAS_PER_MONITOR_DPI && !(defined(__APPLE__) || defined(__EMSCRIPTEN__) || defined(__ANDROID__))
     float x_scale, y_scale;
     glfwGetWindowContentScale(window, &x_scale, &y_scale);
@@ -1085,10 +1076,6 @@ float ImGui_ImplGlfw_GetContentScaleForWindow(GLFWwindow* window)
 
 float ImGui_ImplGlfw_GetContentScaleForMonitor(GLFWmonitor* monitor)
 {
-#if GLFW_HAS_WAYLAND
-    if (ImGui_ImplGlfw_IsWayland()) // We can't access our bd->IsWayland cache for a monitor.
-        return 1.0f;
-#endif
 #if GLFW_HAS_PER_MONITOR_DPI && !(defined(__APPLE__) || defined(__EMSCRIPTEN__) || defined(__ANDROID__))
     float x_scale, y_scale;
     glfwGetMonitorContentScale(monitor, &x_scale, &y_scale);
@@ -1107,11 +1094,6 @@ static void ImGui_ImplGlfw_GetWindowSizeAndFramebufferScale(GLFWwindow* window, 
     glfwGetFramebufferSize(window, &display_w, &display_h);
     float fb_scale_x = (w > 0) ? (float)display_w / (float)w : 1.0f;
     float fb_scale_y = (h > 0) ? (float)display_h / (float)h : 1.0f;
-#if GLFW_HAS_WAYLAND
-    ImGui_ImplGlfw_Data* bd = ImGui_ImplGlfw_GetBackendData(window);
-    if (!bd->IsWayland)
-        fb_scale_x = fb_scale_y = 1.0f;
-#endif
     if (out_size != nullptr)
         *out_size = ImVec2((float)w, (float)h);
     if (out_framebuffer_scale != nullptr)

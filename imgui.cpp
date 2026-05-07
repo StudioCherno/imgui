@@ -1637,6 +1637,7 @@ ImGuiIO::ImGuiIO()
     ConfigViewportsNoTaskBarIcon = false;
     ConfigViewportsNoDecoration = true;
     ConfigViewportsNoDefaultParent = true;
+    ConfigViewportsNoFloatingWindows = false;
     ConfigViewportsPlatformFocusSetsImGuiFocus = true;
 
     // Miscellaneous options
@@ -5418,10 +5419,28 @@ void ImGui::UpdateMouseMovingWindowNewFrame()
             ImVec2 pos = g.IO.MousePos - g.ActiveIdClickOffset;
             if (moving_window->Pos.x != pos.x || moving_window->Pos.y != pos.y)
             {
-                SetWindowPos(moving_window, pos, ImGuiCond_Always);
+                // Use the actual window location returned by the window system if possible,
+                // since windows can snap to borders and things like that which result in a final
+                // window location that is not exactly the same as what was requested.
+                ImVec2 actual = pos;
+                if (moving_window->Viewport && moving_window->ViewportOwned
+                    && g.PlatformIO.Platform_SetWindowPos && g.PlatformIO.Platform_GetWindowPos)
+                {
+                    g.PlatformIO.Platform_SetWindowPos(moving_window->Viewport, pos);
+                    actual = g.PlatformIO.Platform_GetWindowPos(moving_window->Viewport);
+                }
+                SetWindowPos(moving_window, actual, ImGuiCond_Always);
                 if (moving_window->Viewport && moving_window->ViewportOwned) // Synchronize viewport immediately because some overlays may relies on clipping rectangle before we Begin() into the window.
                 {
-                    moving_window->Viewport->Pos = pos;
+                    // Use moving_window->Pos (which SetWindowPos truncated via
+                    // ImTrunc) rather than raw `actual`. If viewport->Pos kept
+                    // the untruncated value, a later sync site would overwrite it
+                    // with window->Pos (truncated), and UpdatePlatformWindows
+                    // would see the mismatch against LastPlatformPos and push the
+                    // truncated position to the OS — which maps to a different
+                    // OS-pixel than what we just set, causing oscillation.
+                    moving_window->Viewport->Pos = moving_window->Pos;
+                    moving_window->Viewport->LastPlatformPos = moving_window->Pos;
                     moving_window->Viewport->UpdateWorkRect();
                 }
             }
@@ -17838,6 +17857,18 @@ static void ImGui::WindowSelectViewport(ImGuiWindow* window)
         SetWindowViewport(window, main_viewport);
         return;
     }
+
+    // When ConfigViewportsNoFloatingWindows is set, only popups/tooltips/menus
+    // may create their own viewport. All other windows stay in the main viewport.
+    if (g.IO.ConfigViewportsNoFloatingWindows)
+    {
+        if ((flags & (ImGuiWindowFlags_Popup | ImGuiWindowFlags_Tooltip | ImGuiWindowFlags_ChildWindow | ImGuiWindowFlags_ChildMenu)) == 0)
+        {
+            SetWindowViewport(window, main_viewport);
+            return;
+        }
+    }
+
     window->ViewportOwned = false;
 
     // Appearing popups reset their viewport so they can inherit again
@@ -21962,7 +21993,11 @@ void ImGui::BeginDockableDragDropSource(ImGuiWindow* window)
     g.LastItemData.ID = window->MoveId;
     window = window->RootWindowDockTree;
     IM_ASSERT((window->Flags & ImGuiWindowFlags_NoDocking) == 0);
-    bool is_drag_docking = (g.IO.ConfigDockingWithShift) || ImRect(0, 0, window->SizeFull.x, GetFrameHeight()).Contains(g.ActiveIdClickOffset); // FIXME-DOCKING: Need to make this stateful and explicit
+    // LuckyEngine: mirrors the custom tab_padding_y in TabItemCalcSize - without this,
+    // clicks in the lower half of a tall tab fall outside GetFrameHeight() and tear-away
+    // drags never turn into a drag-drop source (no docking overlay until re-grab).
+    const float tab_drag_height = ImMax(GetFrameHeight(), g.FontSize + 8.0f * 2.0f);
+    bool is_drag_docking = (g.IO.ConfigDockingWithShift) || ImRect(0, 0, window->SizeFull.x, tab_drag_height).Contains(g.ActiveIdClickOffset); // FIXME-DOCKING: Need to make this stateful and explicit
     ImGuiDragDropFlags drag_drop_flags = ImGuiDragDropFlags_SourceNoPreviewTooltip | ImGuiDragDropFlags_SourceNoHoldToOpenOthers | ImGuiDragDropFlags_PayloadAutoExpire | ImGuiDragDropFlags_PayloadNoCrossContext | ImGuiDragDropFlags_PayloadNoCrossProcess;
     if (is_drag_docking && BeginDragDropSource(drag_drop_flags))
     {
