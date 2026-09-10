@@ -462,6 +462,12 @@ namespace ImGui
     IMGUI_API bool          BeginChild(const char* str_id, const ImVec2& size = ImVec2(0, 0), ImGuiChildFlags child_flags = 0, ImGuiWindowFlags window_flags = 0);
     IMGUI_API bool          BeginChild(ImGuiID id, const ImVec2& size = ImVec2(0, 0), ImGuiChildFlags child_flags = 0, ImGuiWindowFlags window_flags = 0);
     IMGUI_API void          EndChild();
+    // [Hazel] While enabled, every BeginChild() defaults to ImGuiChildFlags_NavFlattened, so keyboard
+    // nav crosses freely into and between child windows instead of each child being one wholesale Tab
+    // stop. Set it around a region whose nested child windows should share one Tab order (a docked
+    // panel's content, whose own inner BeginChild regions are otherwise separate stops), and restore
+    // it to false right after. Off by default, so nothing changes for callers that don't opt in.
+    IMGUI_API void          SetForceChildNavFlattened(bool enabled);
 
     // Windows Utilities
     // - 'current window' = the window we are appending into while inside a Begin()/End() block. 'next window' = next window we will Begin() into.

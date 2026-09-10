@@ -6673,11 +6673,27 @@ bool ImGui::BeginChild(ImGuiID id, const ImVec2& size_arg, ImGuiChildFlags child
     return BeginChildEx(NULL, id, size_arg, child_flags, window_flags);
 }
 
+// [Hazel] See SetForceChildNavFlattened. When true, every BeginChild() below gets NavFlattened, so a
+// region can fold its whole nested-child subtree into one keyboard-nav Tab order without each call
+// site opting in. A plain static, not on ImGuiContext, since it's a Hazel addition scoped to one
+// app's editor render and never needs to travel with a context.
+static bool GHazelForceChildNavFlattened = false;
+
+void ImGui::SetForceChildNavFlattened(bool enabled)
+{
+    GHazelForceChildNavFlattened = enabled;
+}
+
 bool ImGui::BeginChildEx(const char* name, ImGuiID id, const ImVec2& size_arg, ImGuiChildFlags child_flags, ImGuiWindowFlags window_flags)
 {
     ImGuiContext& g = *GImGui;
     ImGuiWindow* parent_window = g.CurrentWindow;
     IM_ASSERT(id != 0);
+
+    // [Hazel] Fold this child into the surrounding Tab order while the app has asked for it (see
+    // SetForceChildNavFlattened), so nested panel regions don't each become a wholesale nav stop.
+    if (GHazelForceChildNavFlattened)
+        child_flags |= ImGuiChildFlags_NavFlattened;
 
     // Sanity check as it is likely that some user will accidentally pass ImGuiWindowFlags into the ImGuiChildFlags argument.
     const ImGuiChildFlags ImGuiChildFlags_SupportedMask_ = ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_ResizeX | ImGuiChildFlags_ResizeY | ImGuiChildFlags_AutoResizeX | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysAutoResize | ImGuiChildFlags_FrameStyle | ImGuiChildFlags_NavFlattened;
