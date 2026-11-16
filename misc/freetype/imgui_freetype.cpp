@@ -48,6 +48,7 @@
 #include FT_GLYPH_H             // <freetype/ftglyph.h>
 #include FT_SIZES_H             // <freetype/ftsizes.h>
 #include FT_SYNTHESIS_H         // <freetype/ftsynth.h>
+#include FT_OUTLINE_H           // <freetype/ftoutln.h> [Hazel] FT_Outline_Translate
 
 // Handle LunaSVG and PlutoSVG
 #if defined(IMGUI_ENABLE_FREETYPE_LUNASVG) && defined(IMGUI_ENABLE_FREETYPE_PLUTOSVG)
@@ -499,13 +500,22 @@ static bool ImGui_ImplFreeType_FontBakedLoadGlyph(ImFontAtlas* atlas, ImFontConf
     const float rasterizer_density = src->RasterizerDensity * baked->RasterizerDensity;
 
     // Load metrics only mode
-    const float advance_x = (slot->advance.x / FT_SCALEFACTOR) / rasterizer_density;
+    // [Hazel] With subpixel positions (ImFontAtlas::SubpixelPositions), the unhinted advance: hinting rounds
+    // slot->advance to whole pixels, leaving nothing between pixels to position glyphs at.
+    const float advance_x = atlas->SubpixelPositions > 1
+        ? ((float)slot->linearHoriAdvance / 65536.0f) / rasterizer_density
+        : (slot->advance.x / FT_SCALEFACTOR) / rasterizer_density;
     if (out_advance_x != NULL)
     {
         IM_ASSERT(out_glyph == NULL);
         *out_advance_x = advance_x;
         return true;
     }
+
+    // [Hazel] Shifted right for a glyph drawn between pixels (ImFontBaked::FindGlyphAtPosition). Only an outline can
+    // be; a bitmap or colour glyph stays as it is.
+    if (atlas->Builder->GlyphShiftX != 0.0f && slot->format == FT_GLYPH_FORMAT_OUTLINE)
+        FT_Outline_Translate(&slot->outline, (FT_Pos)IM_ROUND(atlas->Builder->GlyphShiftX * 64.0f), 0);
 
     // Render glyph into a bitmap (currently held by FreeType)
     FT_Render_Mode render_mode = (bd_font_data->UserFlags & ImGuiFreeTypeLoaderFlags_Monochrome) ? FT_RENDER_MODE_MONO : FT_RENDER_MODE_NORMAL;

@@ -3908,6 +3908,7 @@ struct ImFontAtlas
     const char*                 FontLoaderName;     // Font loader name (for display e.g. in About box) == FontLoader->Name
     void*                       FontLoaderData;     // Font backend opaque storage
     unsigned int                FontLoaderFlags;    // Shared flags (for all fonts) for font loader. THIS IS BUILD IMPLEMENTATION DEPENDENT (e.g. Per-font override is also available in ImFontConfig).
+    int                         SubpixelPositions;  // 1        // [Hazel] Horizontal positions per pixel text is placed at. Above 1, glyph advances keep fractions of a pixel in steps of 1/SubpixelPositions rather than rounding to whole pixels (PixelSnapH), and each glyph is rasterized again shifted by each step it's drawn at, so it sits where the font's advances put it and stays crisp. Set before any text is baked. FreeType loader only.
     int                         RefCount;           // Number of contexts using this atlas
     ImGuiContext*               OwnerContext;       // Context which own the atlas will be in charge of updating and destroying it.
 
@@ -3953,11 +3954,13 @@ struct ImFontBaked
     ImGuiID                     BakedId;            // 4     //     // Unique ID for this baked storage
     ImFont*                     OwnerFont;          // 4-8   // in  // Parent font
     void*                       FontLoaderDatas;    // 4-8   //     // Font loader opaque storage (per baked font * sources): single contiguous buffer allocated by imgui, passed to loader.
+    ImGuiStorage                ShiftedGlyphIndex;  //       //     // [Hazel] Glyphs rasterized shifted between pixels (ImFontAtlas::SubpixelPositions), kept in Glyphs: key glyph index * SubpixelPositions + position, value index + 1.
 
     // Functions
     IMGUI_API ImFontBaked();
     IMGUI_API void              ClearOutputData();
     IMGUI_API ImFontGlyph*      FindGlyph(ImWchar c);               // Return U+FFFD glyph if requested glyph doesn't exists.
+    IMGUI_API ImFontGlyph*      FindGlyphAtPosition(ImWchar c, int position); // [Hazel] FindGlyph(c) rasterized shifted right by position/ImFontAtlas::SubpixelPositions of a pixel, for text placed between pixels; FindGlyph(c) when position is 0 or the glyph can't be shifted.
     IMGUI_API ImFontGlyph*      FindGlyphNoFallback(ImWchar c);     // Return NULL if glyph doesn't exist
     IMGUI_API float             GetCharAdvance(ImWchar c);
     IMGUI_API bool              IsGlyphLoaded(ImWchar c);

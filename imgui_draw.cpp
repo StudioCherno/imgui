@@ -2658,6 +2658,7 @@ ImFontAtlas::ImFontAtlas()
     RendererHasTextures = false; // Assumed false by default, as apps can call e.g Atlas::Build() after backend init and before ImGui can update.
     TexNextUniqueID = 1;
     FontNextUniqueID = 1;
+    SubpixelPositions = 1;
     Builder = NULL;
 }
 
@@ -5095,6 +5096,7 @@ void ImFontBaked::ClearOutputData()
 {
     FallbackAdvanceX = 0.0f;
     Glyphs.clear();
+    ShiftedGlyphIndex.Clear();
     IndexAdvanceX.clear();
     IndexLookup.clear();
     FallbackGlyphIndex = -1;
@@ -5175,9 +5177,12 @@ ImFontGlyph* ImFontAtlasBakedAddFontGlyph(ImFontAtlas* atlas, ImFontBaked* baked
             glyph->X1 += char_off_x;
         }
 
-        // Snap to pixel
+        // Snap to pixel, [Hazel] or to a subpixel position (ImFontAtlas::SubpixelPositions)
         if (src->PixelSnapH)
-            advance_x = IM_ROUND(advance_x * density) / density;
+        {
+            const float steps = density * (float)ImMax(atlas->SubpixelPositions, 1);
+            advance_x = IM_ROUND(advance_x * steps) / steps;
+        }
 
         // Bake spacing
         glyph->AdvanceX = advance_x + src->GlyphExtraAdvanceX;
@@ -5199,7 +5204,6 @@ ImFontGlyph* ImFontAtlasBakedAddFontGlyph(ImFontAtlas* atlas, ImFontBaked* baked
 // FIXME: Code is duplicated with code above.
 void ImFontAtlasBakedAddFontGlyphAdvancedX(ImFontAtlas* atlas, ImFontBaked* baked, ImFontConfig* src, ImWchar codepoint, float advance_x)
 {
-    IM_UNUSED(atlas);
     if (src != NULL)
     {
         // Clamp & recenter if needed
@@ -5207,10 +5211,11 @@ void ImFontAtlasBakedAddFontGlyphAdvancedX(ImFontAtlas* atlas, ImFontBaked* bake
         const float offsets_scale = (ref_size != 0.0f) ? (baked->Size / ref_size) : 1.0f;
         advance_x = ImClamp(advance_x, src->GlyphMinAdvanceX * offsets_scale, src->GlyphMaxAdvanceX * offsets_scale);
 
-        // Snap to pixel: [Hazel] at the rasterizer density, as ImFontAtlasBakedAddFontGlyph does.
-        const float density = src->RasterizerDensity * baked->RasterizerDensity;
+        // Snap to pixel: [Hazel] at the rasterizer density, or to a subpixel position, as
+        // ImFontAtlasBakedAddFontGlyph does.
+        const float steps = src->RasterizerDensity * baked->RasterizerDensity * (float)ImMax(atlas->SubpixelPositions, 1);
         if (src->PixelSnapH)
-            advance_x = IM_ROUND(advance_x * density) / density;
+            advance_x = IM_ROUND(advance_x * steps) / steps;
 
         // Bake spacing
         advance_x += src->GlyphExtraAdvanceX;
@@ -5249,6 +5254,78 @@ ImFontGlyph* ImFontBaked::FindGlyph(ImWchar c)
     }
     ImFontGlyph* glyph = ImFontBaked_BuildLoadGlyph(this, c, NULL);
     return glyph ? glyph : &Glyphs.Data[FallbackGlyphIndex];
+}
+
+// [Hazel] The glyph rasterized again by the loader that made it, shifted right by position/SubpixelPositions of a
+// pixel, and kept in Glyphs (so repacking and discarding treat it as any glyph) but not in IndexLookup: its
+// metrics are the unshifted glyph's, its bitmap and X0/X1 those of the shifted outline.
+ImFontGlyph* ImFontBaked::FindGlyphAtPosition(ImWchar c, int position)
+{
+    ImFontGlyph* glyph = FindGlyph(c);
+    ImFont* font = OwnerFont;
+    ImFontAtlas* atlas = font->OwnerAtlas;
+    const int positions = atlas->SubpixelPositions;
+    if (position <= 0 || positions <= 1 || position >= positions || !glyph->Visible || glyph->Colored)
+        return glyph;
+
+    const int glyph_idx = Glyphs.index_from_ptr(glyph);
+    const ImGuiID key = (ImGuiID)(glyph_idx * positions + position);
+    if (const int stored = ShiftedGlyphIndex.GetInt(key, 0))
+        return &Glyphs.Data[stored - 1];
+    if (atlas->Locked || (font->Flags & ImFontFlags_NoLoadGlyphs) || glyph->SourceIdx >= (unsigned int)font->Sources.Size)
+        return glyph;
+
+    // The loader of the source the glyph came from, and that source's slice of the loader data.
+    char* loader_data_p = (char*)FontLoaderDatas;
+    for (unsigned int src_n = 0; src_n < glyph->SourceIdx; src_n++)
+    {
+        const ImFontConfig* other = font->Sources[src_n];
+        loader_data_p += (other->FontLoader ? other->FontLoader : atlas->FontLoader)->FontBakedSrcLoaderDataSize;
+    }
+    ImFontConfig* src = font->Sources[glyph->SourceIdx];
+    const ImFontLoader* loader = src->FontLoader ? src->FontLoader : atlas->FontLoader;
+
+    // Loading can grow Glyphs and move it, so the glyph is copied first.
+    const ImFontGlyph unshifted = *glyph;
+    ImFontGlyph shifted;
+    atlas->Builder->GlyphShiftX = (float)position / (float)positions;
+    const bool loaded = loader->FontBakedLoadGlyph(atlas, src, this, loader_data_p, (ImWchar)unshifted.Codepoint, &shifted, NULL);
+    atlas->Builder->GlyphShiftX = 0.0f;
+    if (!loaded || shifted.PackId == ImFontAtlasRectId_Invalid || shifted.Colored)
+    {
+        if (loaded && shifted.PackId != ImFontAtlasRectId_Invalid)
+            ImFontAtlasPackDiscardRect(atlas, shifted.PackId);
+        ShiftedGlyphIndex.SetInt(key, glyph_idx + 1);
+        return &Glyphs.Data[glyph_idx];
+    }
+
+    // As ImFontAtlasBakedAddFontGlyph centers a glyph clamped to a minimum or maximum advance.
+    const float ref_size = font->Sources[0]->SizePixels;
+    const float offsets_scale = (ref_size != 0.0f) ? (Size / ref_size) : 1.0f;
+    const float density = src->RasterizerDensity * RasterizerDensity;
+    const float advance_x = ImClamp(shifted.AdvanceX, src->GlyphMinAdvanceX * offsets_scale, src->GlyphMaxAdvanceX * offsets_scale);
+    if (advance_x != shifted.AdvanceX)
+    {
+        const float char_off_x = src->PixelSnapH ? ImTrunc((advance_x - shifted.AdvanceX) * 0.5f * density) / density : (advance_x - shifted.AdvanceX) * 0.5f;
+        shifted.X0 += char_off_x;
+        shifted.X1 += char_off_x;
+    }
+    shifted.Codepoint = unshifted.Codepoint;
+    shifted.SourceIdx = unshifted.SourceIdx;
+    shifted.AdvanceX = unshifted.AdvanceX;
+
+    ImTextureRect* r = ImFontAtlasPackGetRect(atlas, shifted.PackId);
+    shifted.U0 = (r->x) * atlas->TexUvScale.x;
+    shifted.V0 = (r->y) * atlas->TexUvScale.y;
+    shifted.U1 = (r->x + r->w) * atlas->TexUvScale.x;
+    shifted.V1 = (r->y + r->h) * atlas->TexUvScale.y;
+    MetricsTotalSurface += r->w * r->h;
+
+    const int shifted_idx = Glyphs.Size;
+    Glyphs.push_back(shifted);
+    IM_ASSERT(Glyphs.Size < 0xFFFE);
+    ShiftedGlyphIndex.SetInt(key, shifted_idx + 1);
+    return &Glyphs.Data[shifted_idx];
 }
 
 // Attempt to load but when missing, return NULL instead of FallbackGlyph
@@ -5761,13 +5838,21 @@ begin:
         {
             // We don't do a second finer clipping test on the Y axis as we've already skipped anything before clip_rect.y and exit once we pass clip_rect.w
             // [Hazel] Drawn at the size it was rasterized at, the glyph goes on a whole pixel at that
-            // density: lines after the first are a font size apart, which needn't be whole pixels.
+            // density: lines after the first are a font size apart, which needn't be whole pixels. With
+            // subpixel positions, across it goes on the pixel the pen is in, as the glyph rasterized
+            // shifted by the rest.
             float pen_x = x;
             float pen_y = y;
             if (scale == 1.0f)
             {
-                pen_x = IM_ROUND(x * density) / density;
                 pen_y = IM_ROUND(y * density) / density;
+                const int positions = ImMax(OwnerAtlas->SubpixelPositions, 1);
+                const float pen_steps = IM_ROUND(x * density * (float)positions);
+                const float pen_pixel = ImFloor(pen_steps / (float)positions);
+                const int position = (int)(pen_steps - pen_pixel * (float)positions);
+                pen_x = pen_pixel / density;
+                if (position != 0)
+                    glyph = baked->FindGlyphAtPosition((ImWchar)c, position);
             }
             float x1 = pen_x + glyph->X0 * scale;
             float x2 = pen_x + glyph->X1 * scale;

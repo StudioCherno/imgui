@@ -4230,6 +4230,7 @@ struct ImFontAtlasBuilder
     int                         RectsDiscardedCount;
     int                         RectsDiscardedSurface;
     int                         FrameCount;             // Current frame count
+    float                       GlyphShiftX;            // [Hazel] How far right, in rasterized pixels, the loader shifts the glyph it's loading (ImFontBaked::FindGlyphAtPosition)
     ImVec2i                     MaxRectSize;            // Largest rectangle to pack (de-facto used as a "minimum texture size")
     ImVec2i                     MaxRectBounds;          // Bottom-right most used pixels
     bool                        LockDisableResize;      // Disable resizing texture
