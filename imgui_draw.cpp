@@ -4722,12 +4722,14 @@ static bool ImGui_ImplStbTrueType_FontBakedLoadGlyph(ImFontAtlas* atlas, ImFontC
         const float offsets_scale = (ref_size != 0.0f) ? (baked->Size / ref_size) : 1.0f;
         float font_off_x = (src->GlyphOffset.x * offsets_scale);
         float font_off_y = (src->GlyphOffset.y * offsets_scale);
+        // [Hazel] Snapped to whole pixels at the rasterizer density (physical pixels under DPI scaling), not
+        // whole logical units, which at a fractional density put glyphs between pixels.
         if (src->PixelSnapH) // Snap scaled offset. This is to mitigate backward compatibility issues for GlyphOffset, but a better design would be welcome.
-            font_off_x = IM_ROUND(font_off_x);
+            font_off_x = IM_ROUND(font_off_x * rasterizer_density) / rasterizer_density;
         if (src->PixelSnapV)
-            font_off_y = IM_ROUND(font_off_y);
+            font_off_y = IM_ROUND(font_off_y * rasterizer_density) / rasterizer_density;
         font_off_x += sub_x;
-        font_off_y += sub_y + IM_ROUND(baked->Ascent);
+        font_off_y += sub_y + IM_ROUND(baked->Ascent * rasterizer_density) / rasterizer_density;
         float recip_h = 1.0f / (oversample_h * rasterizer_density);
         float recip_v = 1.0f / (oversample_v * rasterizer_density);
 
@@ -5162,17 +5164,20 @@ ImFontGlyph* ImFontAtlasBakedAddFontGlyph(ImFontAtlas* atlas, ImFontBaked* baked
         // Clamp & recenter if needed
         const float ref_size = baked->OwnerFont->Sources[0]->SizePixels;
         const float offsets_scale = (ref_size != 0.0f) ? (baked->Size / ref_size) : 1.0f;
+        // [Hazel] Whole pixels at the rasterizer density (physical pixels under DPI scaling), not whole
+        // logical units, which at a fractional density put every other glyph between pixels.
+        const float density = src->RasterizerDensity * baked->RasterizerDensity;
         float advance_x = ImClamp(glyph->AdvanceX, src->GlyphMinAdvanceX * offsets_scale, src->GlyphMaxAdvanceX * offsets_scale);
         if (advance_x != glyph->AdvanceX)
         {
-            float char_off_x = src->PixelSnapH ? ImTrunc((advance_x - glyph->AdvanceX) * 0.5f) : (advance_x - glyph->AdvanceX) * 0.5f;
+            float char_off_x = src->PixelSnapH ? ImTrunc((advance_x - glyph->AdvanceX) * 0.5f * density) / density : (advance_x - glyph->AdvanceX) * 0.5f;
             glyph->X0 += char_off_x;
             glyph->X1 += char_off_x;
         }
 
         // Snap to pixel
         if (src->PixelSnapH)
-            advance_x = IM_ROUND(advance_x);
+            advance_x = IM_ROUND(advance_x * density) / density;
 
         // Bake spacing
         glyph->AdvanceX = advance_x + src->GlyphExtraAdvanceX;
@@ -5202,9 +5207,10 @@ void ImFontAtlasBakedAddFontGlyphAdvancedX(ImFontAtlas* atlas, ImFontBaked* bake
         const float offsets_scale = (ref_size != 0.0f) ? (baked->Size / ref_size) : 1.0f;
         advance_x = ImClamp(advance_x, src->GlyphMinAdvanceX * offsets_scale, src->GlyphMaxAdvanceX * offsets_scale);
 
-        // Snap to pixel
+        // Snap to pixel: [Hazel] at the rasterizer density, as ImFontAtlasBakedAddFontGlyph does.
+        const float density = src->RasterizerDensity * baked->RasterizerDensity;
         if (src->PixelSnapH)
-            advance_x = IM_ROUND(advance_x);
+            advance_x = IM_ROUND(advance_x * density) / density;
 
         // Bake spacing
         advance_x += src->GlyphExtraAdvanceX;
@@ -5634,9 +5640,13 @@ void ImFont::RenderChar(ImDrawList* draw_list, float size, const ImVec2& pos, Im
 void ImFont::RenderText(ImDrawList* draw_list, float size, const ImVec2& pos, ImU32 col, const ImVec4& clip_rect, const char* text_begin, const char* text_end, float wrap_width, ImDrawTextFlags flags)
 {
     // Align to be pixel perfect
+    // [Hazel] To whole pixels at the density the glyphs were rasterized at (physical pixels under DPI
+    // scaling), not whole logical units, which at a fractional density put text between pixels.
 begin:
-    float x = IM_TRUNC(pos.x);
-    float y = IM_TRUNC(pos.y);
+    ImFontBaked* baked = GetFontBaked(size);
+    const float density = baked->RasterizerDensity;
+    float x = IM_TRUNC(pos.x * density) / density;
+    float y = IM_TRUNC(pos.y * density) / density;
     if (y > clip_rect.w)
         return;
 
@@ -5644,7 +5654,6 @@ begin:
         text_end = text_begin + ImStrlen(text_begin); // ImGui:: functions generally already provides a valid text_end, so this is merely to handle direct calls.
 
     const float line_height = size;
-    ImFontBaked* baked = GetFontBaked(size);
 
     const float scale = size / baked->Size;
     const float origin_x = x;
@@ -5751,10 +5760,19 @@ begin:
         if (glyph->Visible)
         {
             // We don't do a second finer clipping test on the Y axis as we've already skipped anything before clip_rect.y and exit once we pass clip_rect.w
-            float x1 = x + glyph->X0 * scale;
-            float x2 = x + glyph->X1 * scale;
-            float y1 = y + glyph->Y0 * scale;
-            float y2 = y + glyph->Y1 * scale;
+            // [Hazel] Drawn at the size it was rasterized at, the glyph goes on a whole pixel at that
+            // density: lines after the first are a font size apart, which needn't be whole pixels.
+            float pen_x = x;
+            float pen_y = y;
+            if (scale == 1.0f)
+            {
+                pen_x = IM_ROUND(x * density) / density;
+                pen_y = IM_ROUND(y * density) / density;
+            }
+            float x1 = pen_x + glyph->X0 * scale;
+            float x2 = pen_x + glyph->X1 * scale;
+            float y1 = pen_y + glyph->Y0 * scale;
+            float y2 = pen_y + glyph->Y1 * scale;
             if (x1 <= clip_rect.z && x2 >= clip_rect.x)
             {
                 // Render a character

@@ -9624,7 +9624,12 @@ bool    ImGui::BeginTabBar(const char* str_id, ImGuiTabBarFlags flags)
 
     ImGuiID id = window->GetID(str_id);
     ImGuiTabBar* tab_bar = g.TabBars.GetOrAddByKey(id);
-    ImRect tab_bar_bb = ImRect(window->DC.CursorPos.x, window->DC.CursorPos.y, window->WorkRect.Max.x, window->DC.CursorPos.y + g.FontSize + g.Style.FramePadding.y * 2);
+    // LuckyEngine: mirror the custom tab_padding_y in TabItemCalcSize (same as DockNodeCalcTabBarLayout
+    // does for docked tab bars). The bar rect's bottom is where the separator line is drawn; if it
+    // used the smaller FramePadding.y the taller tabs would overhang it and the line would cut across
+    // them instead of sitting under them.
+    const float tab_padding_y = 8.0f;
+    ImRect tab_bar_bb = ImRect(window->DC.CursorPos.x, window->DC.CursorPos.y, window->WorkRect.Max.x, window->DC.CursorPos.y + g.FontSize + tab_padding_y * 2.0f);
     tab_bar->ID = id;
     tab_bar->SeparatorMinX = tab_bar_bb.Min.x - IM_TRUNC(window->WindowPadding.x * 0.5f);
     tab_bar->SeparatorMaxX = tab_bar_bb.Max.x + IM_TRUNC(window->WindowPadding.x * 0.5f);

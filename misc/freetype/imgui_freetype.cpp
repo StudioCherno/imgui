@@ -543,10 +543,12 @@ static bool ImGui_ImplFreeType_FontBakedLoadGlyph(ImFontAtlas* atlas, ImFontConf
         const float offsets_scale = (ref_size != 0.0f) ? (baked->Size / ref_size) : 1.0f;
         float font_off_x = (src->GlyphOffset.x * offsets_scale);
         float font_off_y = (src->GlyphOffset.y * offsets_scale) + baked->Ascent;
+        // [Hazel] Snapped to whole pixels at the rasterizer density (physical pixels under DPI scaling), not
+        // whole logical units, which at a fractional density put glyphs between pixels.
         if (src->PixelSnapH) // Snap scaled offset. This is to mitigate backward compatibility issues for GlyphOffset, but a better design would be welcome.
-            font_off_x = IM_ROUND(font_off_x);
+            font_off_x = IM_ROUND(font_off_x * rasterizer_density) / rasterizer_density;
         if (src->PixelSnapV)
-            font_off_y = IM_ROUND(font_off_y);
+            font_off_y = IM_ROUND(font_off_y * rasterizer_density) / rasterizer_density;
         float recip_h = 1.0f / rasterizer_density;
         float recip_v = 1.0f / rasterizer_density;
 
