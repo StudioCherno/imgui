@@ -290,6 +290,13 @@ extern IMGUI_API ImGuiContext* GImGui;  // Current implicit context pointer
 #define IM_F32_TO_INT8_SAT(_VAL)        ((int)(ImSaturate(_VAL) * 255.0f + 0.5f))               // Saturated, always output 0..255
 #define IM_TRUNC(_VAL)                  ((float)(int)(_VAL))                                    // ImTrunc() is not inlined in MSVC debug builds
 #define IM_ROUND(_VAL)                  ((float)(int)((_VAL) + 0.5f))                           //
+
+// [Hazel] _VAL, in logical units, to the nearest whole pixel at _DENSITY pixels a unit, a tie breaking the same way
+// every time. A position meant to sit exactly between two pixels (an even unit does at 1.25) otherwise rounds one way
+// or the other on the float noise in how it was reached (a scroll offset of whole pixels, 0.8 units each, added), so
+// text moving by whole pixels jiggles. The bias, a sixty-fourth of a pixel, is well above that noise and too small to
+// see.
+#define IM_ROUND_TO_PIXEL(_VAL, _DENSITY) (ImFloor((_VAL) * (_DENSITY) + 0.5f + 1.0f / 64.0f) / (_DENSITY))
 #ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS
 #define IM_FLOOR IM_TRUNC               // [OBSOLETE] Renamed in 1.90.0 (Sept 2023)
 #endif

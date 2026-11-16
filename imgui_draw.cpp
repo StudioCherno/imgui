@@ -5728,12 +5728,15 @@ void ImFont::RenderText(ImDrawList* draw_list, float size, const ImVec2& pos, Im
 {
     // Align to be pixel perfect
     // [Hazel] To whole pixels at the density the glyphs were rasterized at (physical pixels under DPI
-    // scaling), not whole logical units, which at a fractional density put text between pixels.
+    // scaling), not whole logical units, which at a fractional density put text between pixels. And to
+    // the nearest, not truncated: a filled shape's edge goes to the nearest pixel as it's rasterized, so
+    // text moving by fractions of a pixel changes pixel at the same moment as the box behind it does,
+    // rather than wobbling inside it.
 begin:
     ImFontBaked* baked = GetFontBaked(size);
     const float density = baked->RasterizerDensity;
-    float x = IM_TRUNC(pos.x * density) / density;
-    float y = IM_TRUNC(pos.y * density) / density;
+    float x = IM_ROUND_TO_PIXEL(pos.x, density);
+    float y = IM_ROUND_TO_PIXEL(pos.y, density);
     if (y > clip_rect.w)
         return;
 
@@ -5855,9 +5858,10 @@ begin:
             float pen_y = y;
             if (scale == 1.0f)
             {
-                pen_y = IM_ROUND(y * density) / density;
+                pen_y = IM_ROUND_TO_PIXEL(y, density);
                 const int positions = ImMax(OwnerAtlas->SubpixelPositions, 1);
-                const float pen_steps = IM_ROUND(x * density * (float)positions);
+                const float steps_per_unit = density * (float)positions;
+                const float pen_steps = IM_ROUND_TO_PIXEL(x, steps_per_unit) * steps_per_unit;
                 const float pen_pixel = ImFloor(pen_steps / (float)positions);
                 const int position = (int)(pen_steps - pen_pixel * (float)positions);
                 pen_x = pen_pixel / density;
