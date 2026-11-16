@@ -3762,6 +3762,14 @@ enum ImFontAtlasFlags_
     ImFontAtlasFlags_NoBakedLines       = 1 << 2,   // Don't build thick line textures into the atlas (save a little texture memory, allow support for point/nearest filtering). The AntiAliasedLinesUseTex features uses them, otherwise they will be rendered using polygons (more expensive for CPU/GPU).
 };
 
+// [Hazel] The order of a screen's subpixels across a pixel, for LCD (subpixel) anti-aliased text (ImFontAtlas::LcdSubpixelOrder).
+enum ImFontAtlasLcdSubpixelOrder_
+{
+    ImFontAtlasLcdSubpixelOrder_None    = 0,        // Greyscale anti-aliasing.
+    ImFontAtlasLcdSubpixelOrder_RGB     = 1,
+    ImFontAtlasLcdSubpixelOrder_BGR     = 2,
+};
+
 // Load and rasterize multiple TTF/OTF fonts into a same texture. The font atlas will build a single texture holding:
 //  - One or more fonts.
 //  - Custom graphics data needed to render the shapes needed by Dear ImGui.
@@ -3796,6 +3804,7 @@ struct ImFontAtlas
     IMGUI_API void              Clear();                    // Clear everything (input fonts, output glyphs/textures).
     IMGUI_API void              CompactCache();             // Compact cached glyphs and texture.
     IMGUI_API void              SetFontLoader(const ImFontLoader* font_loader); // Change font loader at runtime.
+    IMGUI_API void              SetLcdSubpixelOrder(int order); // [Hazel] Change LcdSubpixelOrder, discarding every baked glyph to render them again. Not between NewFrame() and Render(), whose draw lists may use the glyphs. Glyph metrics don't change, so text measured before stays right.
 
     // As we are transitioning toward a new font system, we expect to obsolete those soon:
     IMGUI_API void              ClearInputData();           // [OBSOLETE] Clear input data (all ImFontConfig structures including sizes, TTF data, glyph ranges, etc.) = all the data used to build the texture and fonts.
@@ -3908,6 +3917,7 @@ struct ImFontAtlas
     const char*                 FontLoaderName;     // Font loader name (for display e.g. in About box) == FontLoader->Name
     void*                       FontLoaderData;     // Font backend opaque storage
     unsigned int                FontLoaderFlags;    // Shared flags (for all fonts) for font loader. THIS IS BUILD IMPLEMENTATION DEPENDENT (e.g. Per-font override is also available in ImFontConfig).
+    int                         LcdSubpixelOrder;   // 0        // [Hazel] ImFontAtlasLcdSubpixelOrder_. Not None, the FreeType loader renders text glyphs with a coverage per subpixel, for a renderer to blend each colour channel by its own (dual-source blending): each texel holds the coverages over the greatest in rgb, the greatest in alpha, and alpha's lowest bit set; colour glyph texels have it clear. A renderer recovers the coverages as rgb * a from a texel with the bit set, and draws any other texel as usual; a renderer without LCD blending averages them. Change it with SetLcdSubpixelOrder().
     int                         SubpixelPositions;  // 1        // [Hazel] Horizontal positions per pixel text is placed at. Above 1, glyph advances keep fractions of a pixel in steps of 1/SubpixelPositions rather than rounding to whole pixels (PixelSnapH), and each glyph is rasterized again shifted by each step it's drawn at, so it sits where the font's advances put it and stays crisp. Set before any text is baked. FreeType loader only.
     int                         RefCount;           // Number of contexts using this atlas
     ImGuiContext*               OwnerContext;       // Context which own the atlas will be in charge of updating and destroying it.

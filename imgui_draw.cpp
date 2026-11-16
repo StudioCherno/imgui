@@ -2692,6 +2692,16 @@ void ImFontAtlas::SetFontLoader(const ImFontLoader* font_loader)
     ImFontAtlasBuildSetupFontLoader(this, font_loader);
 }
 
+// [Hazel]
+void ImFontAtlas::SetLcdSubpixelOrder(int order)
+{
+    if (LcdSubpixelOrder == order)
+        return;
+    LcdSubpixelOrder = order;
+    if (Builder != NULL)
+        ImFontAtlasBuildDiscardBakes(this, 0);
+}
+
 void ImFontAtlas::ClearInputData()
 {
     IM_ASSERT(!Locked && "Cannot modify a locked ImFontAtlas!");

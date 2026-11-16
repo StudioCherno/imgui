@@ -49,6 +49,7 @@
 #include FT_SIZES_H             // <freetype/ftsizes.h>
 #include FT_SYNTHESIS_H         // <freetype/ftsynth.h>
 #include FT_OUTLINE_H           // <freetype/ftoutln.h> [Hazel] FT_Outline_Translate
+#include FT_LCD_FILTER_H        // <freetype/ftlcdfil.h> [Hazel] FT_Library_SetLcdFilter
 
 // Handle LunaSVG and PlutoSVG
 #if defined(IMGUI_ENABLE_FREETYPE_LUNASVG) && defined(IMGUI_ENABLE_FREETYPE_PLUTOSVG)
@@ -261,7 +262,22 @@ static const FT_Glyph_Metrics* ImGui_ImplFreeType_LoadGlyph(ImGui_ImplFreeType_F
     return &slot->metrics;
 }
 
-static void ImGui_ImplFreeType_BlitGlyph(const FT_Bitmap* ft_bitmap, uint32_t* dst, uint32_t dst_pitch)
+// [Hazel] An LCD glyph's texel (ImFontAtlas::LcdSubpixelOrder): each subpixel's coverage over the greatest in rgb,
+// the greatest in alpha, alpha's lowest bit set to mark it; a renderer recovers the coverages as rgb * a. Any
+// other texel decodes the same way only if it's white (rgb * a = a), which colour ones aren't, so theirs have
+// that bit clear.
+static uint32_t ImGui_ImplFreeType_LcdTexel(uint8_t r, uint8_t g, uint8_t b)
+{
+    const uint8_t greatest = ImMax(r, ImMax(g, b));
+    if (greatest == 0)
+        return 0;
+    const auto over_greatest = [greatest](uint8_t c) { return (ImU32)((255u * c + greatest / 2) / greatest); };
+    return IM_COL32(over_greatest(r), over_greatest(g), over_greatest(b), greatest | 1u);
+}
+
+// [Hazel] lcd_order: how an FT_PIXEL_MODE_LCD bitmap's subpixels map to the screen's (ImFontAtlas::LcdSubpixelOrder).
+// lcd_atlas: the atlas holds LCD glyphs, so colour texels must not look like one.
+static void ImGui_ImplFreeType_BlitGlyph(const FT_Bitmap* ft_bitmap, uint32_t* dst, uint32_t dst_pitch, int lcd_order, bool lcd_atlas)
 {
     IM_ASSERT(ft_bitmap != nullptr);
     const uint32_t w = ft_bitmap->width;
@@ -271,6 +287,17 @@ static void ImGui_ImplFreeType_BlitGlyph(const FT_Bitmap* ft_bitmap, uint32_t* d
 
     switch (ft_bitmap->pixel_mode)
     {
+    case FT_PIXEL_MODE_LCD: // [Hazel] Three bytes per pixel, its subpixels' coverages left to right.
+        {
+            const bool bgr = lcd_order == ImFontAtlasLcdSubpixelOrder_BGR;
+            for (uint32_t y = 0; y < h; y++, src += src_pitch, dst += dst_pitch)
+                for (uint32_t x = 0; x < w / 3; x++)
+                {
+                    const uint8_t left = src[x * 3], middle = src[x * 3 + 1], right = src[x * 3 + 2];
+                    dst[x] = bgr ? ImGui_ImplFreeType_LcdTexel(right, middle, left) : ImGui_ImplFreeType_LcdTexel(left, middle, right);
+                }
+            break;
+        }
     case FT_PIXEL_MODE_GRAY: // Grayscale image, 1 byte per pixel.
         {
             for (uint32_t y = 0; y < h; y++, src += src_pitch, dst += dst_pitch)
@@ -301,6 +328,8 @@ static void ImGui_ImplFreeType_BlitGlyph(const FT_Bitmap* ft_bitmap, uint32_t* d
                 for (uint32_t x = 0; x < w; x++)
                 {
                     uint8_t r = src[x * 4 + 2], g = src[x * 4 + 1], b = src[x * 4], a = src[x * 4 + 3];
+                    if (lcd_atlas)
+                        a &= 0xFE;
                     dst[x] = IM_COL32(DE_MULTIPLY(r, a), DE_MULTIPLY(g, a), DE_MULTIPLY(b, a), a);
                 }
             #undef DE_MULTIPLY
@@ -366,6 +395,10 @@ static bool ImGui_ImplFreeType_LoaderInit(ImFontAtlas* atlas)
 
     // If you don't call FT_Add_Default_Modules() the rest of code may work, but FreeType won't use our custom allocator.
     FT_Add_Default_Modules(bd->Library);
+
+    // [Hazel] The filter LCD rendering spreads each subpixel's coverage with, to keep colour fringes down. A FreeType
+    // built without ClearType-style rendering refuses it and renders LCD glyphs its own way (Harmony) instead.
+    FT_Library_SetLcdFilter(bd->Library, FT_LCD_FILTER_DEFAULT);
 
 #ifdef IMGUI_ENABLE_FREETYPE_LUNASVG
     // Install svg hooks for FreeType
@@ -518,13 +551,18 @@ static bool ImGui_ImplFreeType_FontBakedLoadGlyph(ImFontAtlas* atlas, ImFontConf
         FT_Outline_Translate(&slot->outline, (FT_Pos)IM_ROUND(atlas->Builder->GlyphShiftX * 64.0f), 0);
 
     // Render glyph into a bitmap (currently held by FreeType)
+    // [Hazel] An outline renders with a coverage per subpixel when the atlas holds LCD glyphs (ImFontAtlas::LcdSubpixelOrder).
+    const bool lcd_atlas = atlas->LcdSubpixelOrder != ImFontAtlasLcdSubpixelOrder_None;
     FT_Render_Mode render_mode = (bd_font_data->UserFlags & ImGuiFreeTypeLoaderFlags_Monochrome) ? FT_RENDER_MODE_MONO : FT_RENDER_MODE_NORMAL;
+    if (lcd_atlas && render_mode == FT_RENDER_MODE_NORMAL && slot->format == FT_GLYPH_FORMAT_OUTLINE)
+        render_mode = FT_RENDER_MODE_LCD;
     FT_Error error = FT_Render_Glyph(slot, render_mode);
     const FT_Bitmap* ft_bitmap = &slot->bitmap;
     if (error != 0 || ft_bitmap == nullptr)
         return false;
 
-    const int w = (int)ft_bitmap->width;
+    // [Hazel] An LCD bitmap is three bytes, one per subpixel, to a pixel.
+    const int w = (int)ft_bitmap->width / (ft_bitmap->pixel_mode == FT_PIXEL_MODE_LCD ? 3 : 1);
     const int h = (int)ft_bitmap->rows;
     const bool is_visible = (w != 0 && h != 0);
 
@@ -547,7 +585,7 @@ static bool ImGui_ImplFreeType_FontBakedLoadGlyph(ImFontAtlas* atlas, ImFontConf
         // Render pixels to our temporary buffer
         atlas->Builder->TempBuffer.resize(w * h * 4);
         uint32_t* temp_buffer = (uint32_t*)atlas->Builder->TempBuffer.Data;
-        ImGui_ImplFreeType_BlitGlyph(ft_bitmap, temp_buffer, w);
+        ImGui_ImplFreeType_BlitGlyph(ft_bitmap, temp_buffer, w, atlas->LcdSubpixelOrder, lcd_atlas);
 
         const float ref_size = baked->OwnerFont->Sources[0]->SizePixels;
         const float offsets_scale = (ref_size != 0.0f) ? (baked->Size / ref_size) : 1.0f;
