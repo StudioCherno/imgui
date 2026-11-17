@@ -1743,6 +1743,19 @@ void ImDrawList::AddText(ImFont* font, float font_size, const ImVec2& pos, ImU32
     font->RenderText(this, font_size, pos, col, clip_rect, text_begin, text_end, wrap_width, (cpu_fine_clip_rect != NULL) ? ImDrawTextFlags_CpuFineClip : ImDrawTextFlags_None);
 }
 
+void ImDrawList::AddTextZoomed(ImFont* font, float font_size, float zoom, const ImVec2& pos, ImU32 col, const char* text_begin, const char* text_end)
+{
+    if ((col & IM_COL32_A_MASK) == 0)
+        return;
+    if (text_begin == text_end || text_begin[0] == 0)
+        return;
+    if (font == NULL)
+        font = _Data->Font;
+    if (font_size == 0.0f)
+        font_size = _Data->FontSize;
+    font->RenderText(this, font_size, pos, col, _CmdHeader.ClipRect, text_begin, text_end, 0.0f, ImDrawTextFlags_None, zoom);
+}
+
 void ImDrawList::AddText(const ImVec2& pos, ImU32 col, const char* text_begin, const char* text_end)
 {
     AddText(_Data->Font, _Data->FontSize, pos, col, text_begin, text_end);
@@ -5409,11 +5422,14 @@ ImGuiID ImFontAtlasBakedGetId(ImGuiID font_id, float baked_size, float rasterize
 // ImFontBaked pointers are valid for the entire frame but shall never be kept between frames.
 ImFontBaked* ImFont::GetFontBaked(float size, float density)
 {
-    ImFontBaked* baked = LastBaked;
-
     // Round font size
     // - ImGui::PushFont() will already round, but other paths calling GetFontBaked() directly also needs it (e.g. ImFontAtlasBuildPreloadAllGlyphRanges)
-    size = ImGui::GetRoundedFontSize(size);
+    return GetFontBakedExact(ImGui::GetRoundedFontSize(size), density);
+}
+
+ImFontBaked* ImFont::GetFontBakedExact(float size, float density)
+{
+    ImFontBaked* baked = LastBaked;
 
     if (density < 0.0f)
         density = CurrentRasterizerDensity;
@@ -5724,7 +5740,7 @@ void ImFont::RenderChar(ImDrawList* draw_list, float size, const ImVec2& pos, Im
 
 // Note: as with every ImDrawList drawing function, this expects that the font atlas texture is bound.
 // DO NOT CALL DIRECTLY THIS WILL CHANGE WILDLY IN 2025-2025. Use ImDrawList::AddText().
-void ImFont::RenderText(ImDrawList* draw_list, float size, const ImVec2& pos, ImU32 col, const ImVec4& clip_rect, const char* text_begin, const char* text_end, float wrap_width, ImDrawTextFlags flags)
+void ImFont::RenderText(ImDrawList* draw_list, float size, const ImVec2& pos, ImU32 col, const ImVec4& clip_rect, const char* text_begin, const char* text_end, float wrap_width, ImDrawTextFlags flags, float zoom)
 {
     // Align to be pixel perfect
     // [Hazel] To whole pixels at the density the glyphs were rasterized at (physical pixels under DPI
@@ -5735,7 +5751,22 @@ void ImFont::RenderText(ImDrawList* draw_list, float size, const ImVec2& pos, Im
 begin:
     ImFontBaked* baked = GetFontBaked(size);
     const float density = baked->RasterizerDensity;
-    float x = IM_ROUND_TO_PIXEL(pos.x, density);
+    const float scale = size / baked->Size;
+
+    // [Hazel] Zoomed, the text is laid out at `size` and shown `zoom` times larger: each glyph advances
+    // by its advance at `size` times the zoom, so it lands where the layout puts it, but is drawn from
+    // a bake at the zoomed size, crisp, rather than stretched from the one at `size`. The bake's size
+    // is in quarter physical pixels, so zooming bakes a bounded number of sizes; a glyph drawn a
+    // fraction of a pixel smaller or larger than exact doesn't show, but one stretched off the pixel
+    // grid blurs. Across, the start isn't rounded: each glyph goes on a subpixel position anyway.
+    ImFontBaked* draw_baked = baked;
+    if (zoom != 1.0f)
+    {
+        const float steps_per_unit = density * 4.0f;
+        const float steps = ImMax(ImFloor(size * zoom * steps_per_unit + 0.5f), 4.0f);
+        draw_baked = GetFontBakedExact(steps / steps_per_unit, density);
+    }
+    float x = zoom != 1.0f ? pos.x : IM_ROUND_TO_PIXEL(pos.x, density);
     float y = IM_ROUND_TO_PIXEL(pos.y, density);
     if (y > clip_rect.w)
         return;
@@ -5743,11 +5774,13 @@ begin:
     if (!text_end)
         text_end = text_begin + ImStrlen(text_begin); // ImGui:: functions generally already provides a valid text_end, so this is merely to handle direct calls.
 
-    const float line_height = size;
+    const float line_height = size * zoom;
 
-    const float scale = size / baked->Size;
     const float origin_x = x;
     const bool word_wrap_enabled = (wrap_width > 0.0f);
+
+    // [Hazel] Wrapping measures at the layout's size.
+    const float layout_wrap_width = wrap_width / zoom;
 
     // Fast-forward to first visible line
     const char* s = text_begin;
@@ -5760,7 +5793,7 @@ begin:
                 // FIXME-OPT: This is not optimal as do first do a search for \n before calling CalcWordWrapPosition().
                 // If the specs for CalcWordWrapPosition() were reworked to optionally return on \n we could combine both.
                 // However it is still better than nothing performing the fast-forward!
-                s = ImFontCalcWordWrapPositionEx(this, size, s, line_end ? line_end : text_end, wrap_width, flags);
+                s = ImFontCalcWordWrapPositionEx(this, size, s, line_end ? line_end : text_end, layout_wrap_width, flags);
                 s = ImTextCalcWordWrapNextLineStart(s, text_end, flags);
             }
             else
@@ -5807,7 +5840,7 @@ begin:
         {
             // Calculate how far we can render. Requires two passes on the string data but keeps the code simple and not intrusive for what's essentially an uncommon feature.
             if (!word_wrap_eol)
-                word_wrap_eol = ImFontCalcWordWrapPositionEx(this, size, s, text_end, wrap_width - (x - origin_x), flags);
+                word_wrap_eol = ImFontCalcWordWrapPositionEx(this, size, s, text_end, layout_wrap_width - (x - origin_x) / zoom, flags);
 
             if (s >= word_wrap_eol)
             {
@@ -5846,7 +5879,14 @@ begin:
         //if (glyph == NULL)
         //    continue;
 
-        float char_width = glyph->AdvanceX * scale;
+        // [Hazel] Zoomed, advanced as laid out, and drawn from the zoomed bake at its own size.
+        float char_width = glyph->AdvanceX * scale * zoom;
+        float glyph_scale = scale;
+        if (draw_baked != baked)
+        {
+            glyph = draw_baked->FindGlyph((ImWchar)c);
+            glyph_scale = 1.0f;
+        }
         if (glyph->Visible)
         {
             // We don't do a second finer clipping test on the Y axis as we've already skipped anything before clip_rect.y and exit once we pass clip_rect.w
@@ -5856,7 +5896,7 @@ begin:
             // shifted by the rest.
             float pen_x = x;
             float pen_y = y;
-            if (scale == 1.0f)
+            if (glyph_scale == 1.0f)
             {
                 pen_y = IM_ROUND_TO_PIXEL(y, density);
                 const int positions = ImMax(OwnerAtlas->SubpixelPositions, 1);
@@ -5866,12 +5906,12 @@ begin:
                 const int position = (int)(pen_steps - pen_pixel * (float)positions);
                 pen_x = pen_pixel / density;
                 if (position != 0)
-                    glyph = baked->FindGlyphAtPosition((ImWchar)c, position);
+                    glyph = draw_baked->FindGlyphAtPosition((ImWchar)c, position);
             }
-            float x1 = pen_x + glyph->X0 * scale;
-            float x2 = pen_x + glyph->X1 * scale;
-            float y1 = pen_y + glyph->Y0 * scale;
-            float y2 = pen_y + glyph->Y1 * scale;
+            float x1 = pen_x + glyph->X0 * glyph_scale;
+            float x2 = pen_x + glyph->X1 * glyph_scale;
+            float y1 = pen_y + glyph->Y0 * glyph_scale;
+            float y2 = pen_y + glyph->Y1 * glyph_scale;
             if (x1 <= clip_rect.z && x2 >= clip_rect.x)
             {
                 // Render a character
